@@ -194,17 +194,23 @@
     const data = await res.json();
 
     if (!data.items || data.items.length === 0) {
-      showToast('カレンダーに予定が見つかりませんでした');
+      showToast('カレンダーに予定が見つかりませんでした（0件）');
       return;
     }
+
+    // デバッグ：取得したイベントのタイトルをコンソールに表示
+    console.log('取得イベント一覧:', data.items.map(e => e.summary));
 
     // クライアント側で【出張】を含むイベントをフィルタリング
-    data.items = data.items.filter(e => e.summary && e.summary.includes('【出張】'));
+    const tripEvents = data.items.filter(e => e.summary && e.summary.includes('\u300C出張\u300D') || e.summary && e.summary.includes('【出張】'));
 
-    if (data.items.length === 0) {
-      showToast('【出張】の予定が見つかりませんでした');
+    showToast(`全${data.items.length}件取得、出張：${tripEvents.length}件`);
+
+    if (tripEvents.length === 0) {
       return;
     }
+
+    data.items = tripEvents;
 
     let added = 0;
     for (const event of data.items) {
