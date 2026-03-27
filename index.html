@@ -176,16 +176,16 @@
   async function fetchCalendarEvents() {
     showToast('カレンダーを取得中...');
     const now = new Date();
+    now.setHours(0, 0, 0, 0); // 今日の0時から
     const oneYearLater = new Date();
     oneYearLater.setFullYear(now.getFullYear() + 1);
 
     const params = new URLSearchParams({
-      q: '【出張】',
       timeMin: now.toISOString(),
       timeMax: oneYearLater.toISOString(),
       singleEvents: 'true',
       orderBy: 'startTime',
-      maxResults: '100',
+      maxResults: '250',
     });
 
     const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
@@ -194,6 +194,14 @@
     const data = await res.json();
 
     if (!data.items || data.items.length === 0) {
+      showToast('カレンダーに予定が見つかりませんでした');
+      return;
+    }
+
+    // クライアント側で【出張】を含むイベントをフィルタリング
+    data.items = data.items.filter(e => e.summary && e.summary.includes('【出張】'));
+
+    if (data.items.length === 0) {
       showToast('【出張】の予定が見つかりませんでした');
       return;
     }
