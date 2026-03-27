@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>出張予約管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #333; }
+
+    header { background: #1a73e8; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    .btn-add { background: white; color: #1a73e8; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+
+    .filters { padding: 12px 16px; display: flex; gap: 8px; overflow-x: auto; background: white; border-bottom: 1px solid #e0e0e0; }
+    .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 0.85rem; white-space: nowrap; }
+    .filter-btn.active { background: #1a73e8; color: white; border-color: #1a73e8; }
+
+    .list { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 800px; margin: 0 auto; }
+
+    .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .card-title { display: flex; gap: 8px; align-items: center; }
+    .type-badge { font-size: 0.75rem; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
+    .type-新幹線 { background: #e8f0fe; color: #1a73e8; }
+    .type-ホテル { background: #fce8e6; color: #d93025; }
+    .type-レンタカー { background: #e6f4ea; color: #188038; }
+    .trip-date { font-size: 0.85rem; color: #666; }
+    .card-actions { display: flex; gap: 6px; }
+    .btn-edit { background: none; border: 1px solid #ddd; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; color: #555; }
+    .btn-delete { background: none; border: none; cursor: pointer; color: #aaa; font-size: 1rem; padding: 4px; }
+
+    .card-details { font-size: 0.9rem; color: #444; margin-bottom: 10px; }
+    .card-amount { font-size: 0.85rem; color: #666; margin-bottom: 10px; }
+    .amount-value { font-weight: 600; color: #333; }
+
+    .status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .status-label { font-size: 0.8rem; color: #888; }
+    .status-select { font-size: 0.82rem; padding: 4px 8px; border-radius: 6px; border: 1px solid #ddd; cursor: pointer; background: white; }
+    .status-未対応 { color: #999; }
+    .status-仮予約中 { color: #f9a825; }
+    .status-予約完了 { color: #1a73e8; }
+    .status-出張完了 { color: #188038; }
+    .status-経費申請完了 { color: #9c27b0; }
+
+    .empty { text-align: center; padding: 60px 20px; color: #aaa; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: white; border-radius: 16px; padding: 24px; width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; }
+    .modal h2 { font-size: 1.1rem; margin-bottom: 20px; }
+    .form-group { margin-bottom: 16px; }
+    label { font-size: 0.85rem; color: #555; display: block; margin-bottom: 6px; font-weight: 500; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.95rem; font-family: inherit; }
+    textarea { height: 80px; resize: vertical; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .btn-save { flex: 1; background: #1a73e8; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+    .btn-cancel { flex: 1; background: #f1f3f4; color: #333; border: none; padding: 12px; border-radius: 8px; font-size: 1rem; cursor: pointer; }
+
+    .loading { text-align: center; padding: 40px; color: #aaa; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>出張予約管理</h1>
+  <button class="btn-add" onclick="openModal()">＋ 新規追加</button>
+</header>
+
+<div class="filters">
+  <button class="filter-btn active" onclick="setFilter('all', this)">すべて</button>
+  <button class="filter-btn" onclick="setFilter('未対応', this)">未対応</button>
+  <button class="filter-btn" onclick="setFilter('仮予約中', this)">仮予約中</button>
+  <button class="filter-btn" onclick="setFilter('予約完了', this)">予約完了</button>
+  <button class="filter-btn" onclick="setFilter('出張完了', this)">出張完了</button>
+  <button class="filter-btn" onclick="setFilter('経費申請完了', this)">経費申請完了</button>
+</div>
+
+<div class="list" id="list">
+  <div class="loading">読み込み中...</div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2 id="modal-title">新規予約追加</h2>
+    <div class="form-group">
+      <label>出張日</label>
+      <input type="date" id="f-date">
+    </div>
+    <div class="form-group">
+      <label>予約対象</label>
+      <select id="f-type">
+        <option>新幹線</option>
+        <option>ホテル</option>
+        <option>レンタカー</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>ステータス</label>
+      <select id="f-status">
+        <option>未対応</option>
+        <option>仮予約中</option>
+        <option>予約完了</option>
+        <option>出張完了</option>
+        <option>経費申請完了</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>予約内容</label>
+      <textarea id="f-details" placeholder="例：東京→大阪 のぞみ15号 10:00発"></textarea>
+    </div>
+    <div class="form-group">
+      <label>金額（円）</label>
+      <input type="number" id="f-amount" placeholder="例：15000">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
+      <button class="btn-save" onclick="save()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://vqcumfvwfbfywlgmedit.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxY3VtZnZ3ZmJmeXdsZ21lZGl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MTc3NDcsImV4cCI6MjA5MDE5Mzc0N30.j7WkAeMZfTi06wfi9SH-8y6LBnlLVSQSrT-lv6FVUoM';
+
+  const { createClient } = supabase;
+  const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let allData = [];
+  let currentFilter = 'all';
+  let editingId = null;
+
+  async function load() {
+    const { data, error } = await db.from('reservations').select('*').order('trip_date', { ascending: true });
+    if (error) { console.error(error); return; }
+    allData = data;
+    render();
+  }
+
+  function render() {
+    const list = document.getElementById('list');
+    const filtered = currentFilter === 'all' ? allData : allData.filter(r => r.status === currentFilter);
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="empty">予約がありません</div>';
+      return;
+    }
+    list.innerHTML = filtered.map(r => `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="type-badge type-${r.type}">${r.type}</span>
+            <span class="trip-date">${formatDate(r.trip_date)}</span>
+          </div>
+          <div class="card-actions">
+            <button class="btn-edit" onclick="openModal('${r.id}')">編集</button>
+            <button class="btn-delete" onclick="deleteItem('${r.id}')">✕</button>
+          </div>
+        </div>
+        ${r.details ? `<div class="card-details">${r.details}</div>` : ''}
+        ${r.amount ? `<div class="card-amount">金額：<span class="amount-value">¥${r.amount.toLocaleString()}</span></div>` : ''}
+        <div class="status-row">
+          <span class="status-label">ステータス：</span>
+          <select class="status-select status-${r.status}" onchange="updateStatus('${r.id}', this.value, this)">
+            ${['未対応','仮予約中','予約完了','出張完了','経費申請完了'].map(s =>
+              `<option ${s === r.status ? 'selected' : ''}>${s}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  }
+
+  function setFilter(val, btn) {
+    currentFilter = val;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    render();
+  }
+
+  function openModal(id = null) {
+    editingId = id;
+    document.getElementById('modal-title').textContent = id ? '予約を編集' : '新規予約追加';
+    if (id) {
+      const r = allData.find(x => x.id === id);
+      document.getElementById('f-date').value = r.trip_date || '';
+      document.getElementById('f-type').value = r.type;
+      document.getElementById('f-status').value = r.status;
+      document.getElementById('f-details').value = r.details || '';
+      document.getElementById('f-amount').value = r.amount || '';
+    } else {
+      document.getElementById('f-date').value = '';
+      document.getElementById('f-type').value = '新幹線';
+      document.getElementById('f-status').value = '未対応';
+      document.getElementById('f-details').value = '';
+      document.getElementById('f-amount').value = '';
+    }
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+    editingId = null;
+  }
+
+  async function save() {
+    const payload = {
+      trip_date: document.getElementById('f-date').value,
+      type: document.getElementById('f-type').value,
+      status: document.getElementById('f-status').value,
+      details: document.getElementById('f-details').value,
+      amount: document.getElementById('f-amount').value ? parseInt(document.getElementById('f-amount').value) : null,
+    };
+    if (!payload.trip_date) { alert('出張日を入力してください'); return; }
+
+    if (editingId) {
+      await db.from('reservations').update(payload).eq('id', editingId);
+    } else {
+      await db.from('reservations').insert(payload);
+    }
+    closeModal();
+    load();
+  }
+
+  async function updateStatus(id, status, el) {
+    el.className = `status-select status-${status}`;
+    await db.from('reservations').update({ status }).eq('id', id);
+    const item = allData.find(x => x.id === id);
+    if (item) item.status = status;
+    if (currentFilter !== 'all') render();
+  }
+
+  async function deleteItem(id) {
+    if (!confirm('削除しますか？')) return;
+    await db.from('reservations').delete().eq('id', id);
+    load();
+  }
+
+  document.getElementById('modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('modal')) closeModal();
+  });
+
+  load();
+</script>
+</body>
+</html>
