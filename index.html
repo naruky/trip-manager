@@ -213,15 +213,13 @@
     data.items = tripEvents;
 
     let added = 0;
-    for (const event of data.items) {
+    for (const event of tripEvents) {
       const title = event.summary || '';
-      if (!title.includes('【出張】')) continue;
-
       const dateStr = event.start.date || event.start.dateTime?.split('T')[0];
       if (!dateStr) continue;
 
-      // 予約内容：タイトルから【出張】を除いた部分
-      const details = title.replace('【出張】', '').trim();
+      // 予約内容：タイトルから出張タグを除いた部分（括弧の種類を問わず除去）
+      const details = title.replace(/[【「]出張[】」]/g, '').trim();
 
       console.log('登録試行:', { dateStr, details });
 
