@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>出張予約管理</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #333; }
 
-    header { background: #1a73e8; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
-    header h1 { font-size: 1.2rem; font-weight: 600; }
+    header { background: #1a73e8; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    header h1 { font-size: 1.2rem; font-weight: 600; flex: 1; }
+    .header-btns { display: flex; gap: 8px; }
     .btn-add { background: white; color: #1a73e8; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+    .btn-sync { background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.6); padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+    .btn-sync:hover { background: rgba(255,255,255,0.3); }
 
     .filters { padding: 12px 16px; display: flex; gap: 8px; overflow-x: auto; background: white; border-bottom: 1px solid #e0e0e0; }
     .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 0.85rem; white-space: nowrap; }
@@ -60,13 +64,20 @@
     .btn-cancel { flex: 1; background: #f1f3f4; color: #333; border: none; padding: 12px; border-radius: 8px; font-size: 1rem; cursor: pointer; }
 
     .loading { text-align: center; padding: 40px; color: #aaa; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 12px 24px; border-radius: 24px; font-size: 0.9rem; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+    .toast.show { opacity: 1; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>出張予約管理</h1>
-  <button class="btn-add" onclick="openModal()">＋ 新規追加</button>
+  <div class="header-btns">
+    <button class="btn-sync" onclick="syncCalendar()">カレンダー同期</button>
+    <button class="btn-add" onclick="openModal()">＋ 新規追加</button>
+  </div>
 </header>
 
 <div class="filters">
@@ -123,9 +134,13 @@
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
   const SUPABASE_URL = 'https://vqcumfvwfbfywlgmedit.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxY3VtZnZ3ZmJmeXdsZ21lZGl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MTc3NDcsImV4cCI6MjA5MDE5Mzc0N30.j7WkAeMZfTi06wfi9SH-8y6LBnlLVSQSrT-lv6FVUoM';
+  const GOOGLE_CLIENT_ID = '1073448859620-agjq0plc255idq7aq487nv1ame5o4q4u.apps.googleusercontent.com';
+  const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 
   const { createClient } = supabase;
   const db = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -133,6 +148,99 @@
   let allData = [];
   let currentFilter = 'all';
   let editingId = null;
+  let tokenClient = null;
+  let accessToken = null;
+
+  // Google Identity Services初期化
+  window.addEventListener('load', () => {
+    if (typeof google !== 'undefined') {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: CALENDAR_SCOPE,
+        callback: onTokenReceived,
+      });
+    }
+  });
+
+  function onTokenReceived(resp) {
+    if (resp.error) { showToast('Google認証に失敗しました'); return; }
+    accessToken = resp.access_token;
+    fetchCalendarEvents();
+  }
+
+  async function syncCalendar() {
+    if (!tokenClient) { showToast('Google認証の準備中です。少し待ってから再試行してください。'); return; }
+    tokenClient.requestAccessToken();
+  }
+
+  async function fetchCalendarEvents() {
+    showToast('カレンダーを取得中...');
+    const now = new Date();
+    const oneYearLater = new Date();
+    oneYearLater.setFullYear(now.getFullYear() + 1);
+
+    const params = new URLSearchParams({
+      q: '【出張】',
+      timeMin: now.toISOString(),
+      timeMax: oneYearLater.toISOString(),
+      singleEvents: 'true',
+      orderBy: 'startTime',
+      maxResults: '100',
+    });
+
+    const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const data = await res.json();
+
+    if (!data.items || data.items.length === 0) {
+      showToast('【出張】の予定が見つかりませんでした');
+      return;
+    }
+
+    let added = 0;
+    for (const event of data.items) {
+      const title = event.summary || '';
+      if (!title.includes('【出張】')) continue;
+
+      const dateStr = event.start.date || event.start.dateTime?.split('T')[0];
+      if (!dateStr) continue;
+
+      // 予約内容：タイトルから【出張】を除いた部分
+      const details = title.replace('【出張】', '').trim();
+
+      // 既存チェック：同じ日付の予約がなければ追加
+      const { data: existing } = await db.from('reservations')
+        .select('id')
+        .eq('trip_date', dateStr)
+        .eq('details', details);
+
+      if (existing && existing.length > 0) continue;
+
+      // 新幹線・ホテル・レンタカーの3件を追加
+      const inserts = ['新幹線', 'ホテル', 'レンタカー'].map(type => ({
+        trip_date: dateStr,
+        type,
+        status: '未対応',
+        details,
+        amount: null,
+      }));
+
+      await db.from('reservations').insert(inserts);
+      added++;
+    }
+
+    await load();
+    showToast(added > 0 ? `${added}件の出張を追加しました` : '新しい出張予定はありませんでした');
+  }
+
+  // Toast通知
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
 
   async function load() {
     const { data, error } = await db.from('reservations').select('*').order('trip_date', { ascending: true });
